@@ -1,3 +1,7 @@
+# secrets.h contains private information, should not be uploaded to GitHub
+*secrets.h
+*secret.h
+
 # Prerequisites
 *.d
 
