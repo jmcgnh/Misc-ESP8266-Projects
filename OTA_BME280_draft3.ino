@@ -7,7 +7,8 @@
 //
 // 2019-06-06 tested, draft 1 working
 // 2019-06-25 tested, draft 2 working after addition of client.setInsecure();
-// 2019-06-25 draft 3 will add IFTTT Webhooks
+// 2019-06-25 tested, draft 3 working after adding IFTTT webhooks support, clang
+// formatting, additional streamlining
 //
 //////////////////////////////////////////////////////
 #include <Adafruit_BME280.h>
@@ -22,7 +23,7 @@
 // Identification
 const char vfname[] = __FILE__;
 const char vtimestamp[] = __DATE__ " " __TIME__;
-const char versionstring[] = "20190626.1510.1";
+const char versionstring[] = "20190627.1130.1";
 
 #define EAGLEROCK 1
 #define PHANT01 1
@@ -89,10 +90,10 @@ void setup()
     WiFi.enableInsecureWEP(true);
     WiFi.begin(ssid, password);
     while (WiFi.waitForConnectResult() != WL_CONNECTED)
-    {
-        Serial.println("Connection Failed! Rebooting...");
-        ESP.restart();
-    }
+        {
+            Serial.println("Connection Failed! Rebooting...");
+            ESP.restart();
+        }
 
     // Identification
     Serial.println();
@@ -105,13 +106,13 @@ void setup()
     ArduinoOTA.onStart([]() {
         String type;
         if (ArduinoOTA.getCommand() == U_FLASH)
-        {
-            type = "sketch";
-        }
+            {
+                type = "sketch";
+            }
         else
-        { // U_SPIFFS
-            type = "filesystem";
-        }
+            { // U_SPIFFS
+                type = "filesystem";
+            }
 
         // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS
         // using SPIFFS.end()
@@ -124,25 +125,25 @@ void setup()
     ArduinoOTA.onError([](ota_error_t error) {
         Serial.printf("Error[%u]: ", error);
         if (error == OTA_AUTH_ERROR)
-        {
-            Serial.println("Auth Failed");
-        }
+            {
+                Serial.println("Auth Failed");
+            }
         else if (error == OTA_BEGIN_ERROR)
-        {
-            Serial.println("Begin Failed");
-        }
+            {
+                Serial.println("Begin Failed");
+            }
         else if (error == OTA_CONNECT_ERROR)
-        {
-            Serial.println("Connect Failed");
-        }
+            {
+                Serial.println("Connect Failed");
+            }
         else if (error == OTA_RECEIVE_ERROR)
-        {
-            Serial.println("Receive Failed");
-        }
+            {
+                Serial.println("Receive Failed");
+            }
         else if (error == OTA_END_ERROR)
-        {
-            Serial.println("End Failed");
-        }
+            {
+                Serial.println("End Failed");
+            }
     });
     ArduinoOTA.begin();
 
@@ -167,41 +168,41 @@ void loop()
     unsigned long currentMillis = millis();
     // loop to blink without delay
     if (currentMillis - previousMillis >= interval)
-    {
-        // save the last time you changed the LED state
-        previousMillis = currentMillis;
-        ledcount++;
-        ledmod = ledcount % 128;
-        if (ledmod % 64 == 0 || ledmod == 74 || ledmod == 84)
         {
-            ledState = 0; // Oddly, this turns LED _ON_
+            // save the last time you changed the LED state
+            previousMillis = currentMillis;
+            ledcount++;
+            ledmod = ledcount % 128;
+            if (ledmod % 64 == 0 || ledmod == 74 || ledmod == 84)
+                {
+                    ledState = 0; // Oddly, this turns LED _ON_
+                }
+            else if (ledmod % 64 == 1 || ledmod == 75 || ledmod == 85)
+                {
+                    ledState = 1; // turns LED _OFF_
+                }
+            // Serial.print( ledState);
+            // Serial.println(" blink");
+            // set the LED with the ledState of the variable:
+            digitalWrite(led, ledState);
         }
-        else if (ledmod % 64 == 1 || ledmod == 75 || ledmod == 85)
-        {
-            ledState = 1; // turns LED _OFF_
-        }
-        // Serial.print( ledState);
-        // Serial.println(" blink");
-        // set the LED with the ledState of the variable:
-        digitalWrite(led, ledState);
-    }
 
 #ifdef PHANT01
     // handle phant reporting
     if (currentMillis >= phantNextReport)
-    {
-        handlePhantReport();
-        phantNextReport = currentMillis + phantInterval;
-    }
+        {
+            handlePhantReport();
+            phantNextReport = currentMillis + phantInterval;
+        }
 #endif // PHANT01
 
 #ifdef IFTTT
     // handle ifttt reporting
     if (currentMillis >= iftttNextReport)
-    {
-        handleIftttReport();
-        iftttNextReport = currentMillis + iftttInterval;
-    }
+        {
+            handleIftttReport();
+            iftttNextReport = currentMillis + iftttInterval;
+        }
 #endif // IFTTT
 }
 
@@ -268,28 +269,30 @@ String SendHTML(float temperatureC, float temperaturef, float humidity,
         "}\n"
         "</script>\n"
         "</head>"
-        "<body>"
-        "<h1>ESP8266 Weather Station</h1>"
-        "<div class='container'>"
-        "<div class='data temperature'>"
-        "<div class='side-by-side icon'>"
-        "<svg enable-background='new 0 0 19.438 54.003'height=54.003px "
-        "id=Layer_1 version=1.1 viewBox='0 0 19.438 54.003'width=19.438px "
-        "x=0px xml:space=preserve xmlns=http://www.w3.org/2000/svg "
-        "xmlns:xlink=http://www.w3.org/1999/xlink y=0px><g><path "
-        "d='M11.976,8.82v-2h4.084V6.063C16.06,2.715,13.345,0,9.996,0H9."
-        "313C5.965,0,3.252,2.715,3.252,6.063v30.982"
-        "C1.261,38.825,0,41.403,0,44.286c0,5.367,4.351,9.718,9.719,9.718c5."
-        "368,0,9.719-4.351,9.719-9.718"
-        "c0-2.943-1.312-5.574-3.378-7.355V18.436h-3.914v-2h3.914v-2.808h-4."
-        "084v-2h4.084V8.82H11.976z M15.302,44.833"
-        "c0,3.083-2.5,5.583-5.583,5.583s-5.583-2.5-5.583-5.583c0-2.279,1."
-        "368-4.236,3.326-5.104V24.257C7.462,23.01,8.472,22,9.719,22"
-        "s2.257,1.01,2.257,2.257V39.73C13.934,40.597,15.302,42.554,15.302,"
-        "44.833z'fill=#F29C21 /></g></svg>"
-        "</div>"
-        "<div class='side-by-side text'>Temperature</div>"
-        "<div class='side-by-side reading'>";
+        "<body>";
+
+    ptr += "<h1>Linnea's Weather Station</h1>";
+
+    ptr += "<div class='container'>"
+           "<div class='data temperature'>"
+           "<div class='side-by-side icon'>"
+           "<svg enable-background='new 0 0 19.438 54.003'height=54.003px "
+           "id=Layer_1 version=1.1 viewBox='0 0 19.438 54.003'width=19.438px "
+           "x=0px xml:space=preserve xmlns=http://www.w3.org/2000/svg "
+           "xmlns:xlink=http://www.w3.org/1999/xlink y=0px><g><path "
+           "d='M11.976,8.82v-2h4.084V6.063C16.06,2.715,13.345,0,9.996,0H9."
+           "313C5.965,0,3.252,2.715,3.252,6.063v30.982"
+           "C1.261,38.825,0,41.403,0,44.286c0,5.367,4.351,9.718,9.719,9.718c5."
+           "368,0,9.719-4.351,9.719-9.718"
+           "c0-2.943-1.312-5.574-3.378-7.355V18.436h-3.914v-2h3.914v-2.808h-4."
+           "084v-2h4.084V8.82H11.976z M15.302,44.833"
+           "c0,3.083-2.5,5.583-5.583,5.583s-5.583-2.5-5.583-5.583c0-2.279,1."
+           "368-4.236,3.326-5.104V24.257C7.462,23.01,8.472,22,9.719,22"
+           "s2.257,1.01,2.257,2.257V39.73C13.934,40.597,15.302,42.554,15.302,"
+           "44.833z'fill=#F29C21 /></g></svg>"
+           "</div>"
+           "<div class='side-by-side text'>Temperature</div>"
+           "<div class='side-by-side reading'>";
 
     ptr += (int)temperatureF;
 
@@ -299,24 +302,24 @@ String SendHTML(float temperatureC, float temperaturef, float humidity,
     ptr += (int)temperatureC;
 
     ptr += "<span class='superscript'>&deg;C</span>&nbsp;&nbsp;)</div>"
-           "</div>";
-    "<div class='data humidity'>"
-    "<div class='side-by-side icon'>"
-    "<svg enable-background='new 0 0 29.235 40.64'height=40.64px "
-    "id=Layer_1 version=1.1 viewBox='0 0 29.235 40.64'width=29.235px "
-    "x=0px xml:space=preserve xmlns=http://www.w3.org/2000/svg "
-    "xmlns:xlink=http://www.w3.org/1999/xlink y=0px><path "
-    "d='M14.618,0C14.618,0,0,17.95,0,26.022C0,34.096,6.544,40.64,14.618,"
-    "40.64s14.617-6.544,14.617-14.617";
-    "C29.235,17.95,14.618,0,14.618,0z "
-    "M13.667,37.135c-5.604,0-10.162-4.56-10.162-10.162c0-0.787,0.638-1."
-    "426,1.426-1.426";
-    "c0.787,0,1.425,0.639,1.425,1.426c0,4.031,3.28,7.312,7.311,7.312c0."
-    "787,0,1.425,0.638,1.425,1.425";
-    "C15.093,36.497,14.455,37.135,13.667,37.135z'fill=#3C97D3 /></svg>"
-    "</div>"
-    "<div class='side-by-side text'>Humidity</div>"
-    "<div class='side-by-side reading'>";
+           "</div>"
+           "<div class='data humidity'>"
+           "<div class='side-by-side icon'>"
+           "<svg enable-background='new 0 0 29.235 40.64'height=40.64px "
+           "id=Layer_1 version=1.1 viewBox='0 0 29.235 40.64'width=29.235px "
+           "x=0px xml:space=preserve xmlns=http://www.w3.org/2000/svg "
+           "xmlns:xlink=http://www.w3.org/1999/xlink y=0px><path "
+           "d='M14.618,0C14.618,0,0,17.95,0,26.022C0,34.096,6.544,40.64,14.618,"
+           "40.64s14.617-6.544,14.617-14.617"
+           "C29.235,17.95,14.618,0,14.618,0z "
+           "M13.667,37.135c-5.604,0-10.162-4.56-10.162-10.162c0-0.787,0.638-1."
+           "426,1.426-1.426"
+           "c0.787,0,1.425,0.639,1.425,1.426c0,4.031,3.28,7.312,7.311,7.312c0."
+           "787,0,1.425,0.638,1.425,1.425"
+           "C15.093,36.497,14.455,37.135,13.667,37.135z'fill=#3C97D3 /></svg>"
+           "</div>"
+           "<div class='side-by-side text'>Humidity</div>"
+           "<div class='side-by-side reading'>";
 
     ptr += (int)humidity;
 
@@ -406,21 +409,21 @@ void handlePhantReport()
     WiFiClientSecure client;
     client.setInsecure(); // See BearSSL documentation
     if (!client.connect(phantHost, 443))
-    {
-        Serial.println("Connection Fail");
-        // return;
-    }
+        {
+            Serial.println("Connection Fail");
+            // return;
+        }
     if (client.verify(phantCertFingerprint, phantHost))
-    {
-        Serial.println(
-            "certificate matches"); // With BearSSL set to Insecure mode, it
-                                    // will always report that it matches
-    }
+        {
+            Serial.println(
+                "certificate matches"); // With BearSSL set to Insecure mode, it
+                                        // will always report that it matches
+        }
     else
-    {
-        Serial.println("certificate doesn't match");
-        // return;
-    }
+        {
+            Serial.println("certificate doesn't match");
+            // return;
+        }
 
     String ReqData = "barom=";
     ReqData += barom;
@@ -455,13 +458,13 @@ void handlePhantReport()
 
     Serial.println("-----Response-----");
     while (client.connected())
-    {
-        if (client.available())
         {
-            String line = client.readStringUntil('\n');
-            Serial.println(line);
+            if (client.available())
+                {
+                    String line = client.readStringUntil('\n');
+                    Serial.println(line);
+                }
         }
-    }
     Serial.println("----------");
 }
 #endif // PHANT01
@@ -482,31 +485,31 @@ void handleIftttReport()
     WiFiClientSecure client;
     client.setInsecure(); // See BearSSL documentation
     if (!client.connect(iftttHost, 443))
-    {
-        Serial.println("Connection Fail");
-        // return;
-    }
+        {
+            Serial.println("Connection Fail");
+            // return;
+        }
     if (client.verify(iftttCertFingerprint, iftttHost))
-    {
-        Serial.println(
-            "certificate matches"); // With BearSSL set to Insecure mode, it
-                                    // will always report that it matches
-    }
+        {
+            Serial.println(
+                "certificate matches"); // With BearSSL set to Insecure mode, it
+                                        // will always report that it matches
+        }
     else
-    {
-        Serial.println("certificate doesn't match");
-        // return;
-    }
+        {
+            Serial.println("certificate doesn't match");
+            // return;
+        }
 
     // IFTTT will accept JSON here
-    String ReqData = "( ";
-    ReqData += "\"value1\"    : \"";
+    String ReqData = "{ ";
+    ReqData += "\"value1\" : \"";
     ReqData += barom;
     ReqData += "\", ";
-    ReqData += "\"value2\"    : \"";
+    ReqData += "\"value2\" : \"";
     ReqData += humidity;
     ReqData += "\", ";
-    ReqData += "\"value3\"    : \"";
+    ReqData += "\"value3\" : \"";
     ReqData += tempf;
     ReqData += "\" ";
     ReqData += "}\r\n";
@@ -527,7 +530,8 @@ void handleIftttReport()
     WebReq += "Content-Length: ";
     WebReq += ReqData.length();
     WebReq += "\r\n";
-    /// WebReq += "Content-Type: application/json" "\r\n";
+    WebReq += "Content-Type: application/json"
+              "\r\n";
     WebReq += "\r\n";  // end of headers
     WebReq += ReqData; // POST data
 
@@ -538,46 +542,46 @@ void handleIftttReport()
     unsigned long contentLength = 0;
     bool EOHseen = 0;
     while (client.connected())
-    {
-        String line;
-        if (client.available() and !EOHseen)
         {
-            line = client.readStringUntil('\n');
-            Serial.print(line.length());
-            Serial.print(" [");
-            Serial.print(line);
-            Serial.println("]");
-            if (line.startsWith("Content-Length:"))
-            {
-                // find first digit, or EOS
-                unsigned int l = line.length();
-                unsigned int p = 0;
-                while (p <= l && !isDigit(line.charAt(p)))
+            String line;
+            if (client.available() and !EOHseen)
                 {
-                    ++p;
+                    line = client.readStringUntil('\n');
+                    Serial.print(line.length());
+                    Serial.print(" [");
+                    Serial.print(line);
+                    Serial.println("]");
+                    if (line.startsWith("Content-Length:"))
+                        {
+                            // find first digit, or EOS
+                            unsigned int l = line.length();
+                            unsigned int p = 0;
+                            while (p <= l && !isDigit(line.charAt(p)))
+                                {
+                                    ++p;
+                                }
+                            if (p <= l)
+                                {
+                                    contentLength = line.substring(p).toInt();
+                                }
+                        }
+                    if (line.startsWith("\r") or line.startsWith("\n") or
+                        line.length() <= 1)
+                        {
+                            EOHseen = 1;
+                        }
                 }
-                if (p <= l)
+            if (client.available() >= contentLength and EOHseen)
                 {
-                    contentLength = line.substring(p).toInt();
+                    char payload[contentLength + 1];
+                    client.readBytes(payload, contentLength);
+                    Serial.print(contentLength);
+                    Serial.print(" [");
+                    Serial.print(payload);
+                    Serial.println("] ");
+                    break;
                 }
-            }
-            if (line.startsWith("\r") or line.startsWith("\n") or
-                line.length() <= 1)
-            {
-                EOHseen = 1;
-            }
         }
-        if (client.available() >= contentLength and EOHseen)
-        {
-            char payload[contentLength + 1];
-            client.readBytes(payload, contentLength);
-            Serial.print(contentLength);
-            Serial.print(" [");
-            Serial.print(payload);
-            Serial.println("] ");
-            break;
-        }
-    }
     Serial.println("----------");
 }
 #endif // IFTTT
