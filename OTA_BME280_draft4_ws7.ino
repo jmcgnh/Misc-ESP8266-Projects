@@ -1,4 +1,4 @@
-/////////////// OTA_BME280_draft3 ////////////////////
+/////////////// OTA_BME280_draft4_ws7 ////////////////////
 //
 //  This source file combines code from:
 //      https://lastminuteengineers.com/bme280-esp8266-weather-station/
@@ -9,68 +9,75 @@
 // 2019-06-25 tested, draft 2 working after addition of client.setInsecure();
 // 2019-06-25 tested, draft 3 working after adding IFTTT webhooks support, clang
 // formatting, additional streamlining
-// 2019-08-08 draft 4 under development - change to website OTA, forced sample
-// setup for BME280 and perhaps make switching identities or locations easier.
+// 2019-08-15 draft 4 under development
+//     - use wifiMulti, all builds can now work in any of my environments
+//     - added website OTA - ESPhttpUpdate
+//     - BME280 now placed in "forced" mode
+//     - hostname lookup is now implemented via hostmap-secrets.h
+//     - want to select event names, phant keys, etc using hostname lookup
+// When finished, this version should be able to be built and downloaded to any
+// module. Some choices remain: whether to use deep sleep, whether to try to
+// report battery voltage. Deep sleep means that real-time web response will
+// need to be delegated elsewhere, most likely to the mosquitto host.
 //
 //////////////////////////////////////////////////////
+// #define DEBUG_ESP_WIFI 1
+// #define DEBUG_ESP_HTTP_UPDATE 1
 #include <Adafruit_BME280.h>
 #include <Adafruit_Sensor.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
+#include <ESP8266httpUpdate.h>
 #include <ESP8266mDNS.h>
+#include <PubSubClient.h>
 #include <WiFiUdp.h>
 #include <Wire.h>
 
 // Identification
 const char vfname[] = __FILE__;
 const char vtimestamp[] = __DATE__ " " __TIME__;
-const char versionstring[] = "20190808.0525.1";
+String versionstring = "20190820.0220.1";
+String myHostname = "unknown";
 
-#define EAGLEROCK 1
 #define PHANT01 1
 #define IFTTT 1
 
-#include "secrets.h" // keep secret information elsewhere
-
-#ifndef STASSID
-#define STASSID "your-ssid"
-#define STAPSK "your-password"
-#endif
-
 #ifdef PHANT01
 /////////////// Phant ////////////////////////
+#include "phant-secrets.h"
 const char phantHost[] = MYPHANTHOST;
 const char phantWebPage[] = MYPHANTWEBPAGE;
 const char phantPubKey[] = MYPHANTPUBKEY;
 const char phantPrivKey[] = MYPHANTPRIVKEY;
-const char phantCertFingerprint[] = PHANTSHA1FINGERPRINT;
 unsigned long phantNextReport = 0;
 unsigned long phantInterval = 15 * 60 * 1000; // 15 minutes
 #endif                                        // PHANT01
 
 #ifdef IFTTT
 /////////////// IFTTT ////////////////////////
+#include "ifttt-secrets.h"
 const char iftttHost[] = "maker.ifttt.com";
 const char iftttWebPage[] = "/trigger/";
-const char iftttEventname[] = MYIFTTTEVENTNAME;
 const char iftttMakerKey[] = MYIFTTTMAKERKEY;
-const char iftttCertFingerprint[] = IFTTTSHA1FINGERPRINT;
 unsigned long iftttNextReport = 0;
-unsigned long iftttInterval = 21 * 60 * 1000; // 21 minutes
+unsigned long iftttInterval = 20 * 60 * 1000; // 20 minutes
 #endif                                        // IFTTT
 
-const char *ssid = STASSID;
-const char *password = STAPSK;
-
 // variabls for blinking an LED with Millis
-const int led = BUILTIN_LED; // ESP8266 Pin to which onboard LED is connected
+const int led = LED_BUILTIN; // ESP8266 Pin to which onboard LED is connected
 unsigned long previousMillis = 0; // will store last time LED was updated
-const long interval = 20;         // interval at which to blink (milliseconds)
+const long blinkInterval = 20;    // interval at which to blink (milliseconds)
 unsigned long ledcount;           // led counter for non-binary blink states
 unsigned long ledmod;             // remainder of ledcount
 int ledState = LOW;               // ledState used to set the LED
 
+// OTA variables
+const long OtaUpdateInterval = 10 * 60 * 1000; // 10 minutes
+unsigned long nextOtaUpdate = 0;
+
+ESP8266WiFiMulti wifiMulti;
 ESP8266WebServer server(80);
 
 #define BME_ADDR 0x76
@@ -84,18 +91,14 @@ void setup()
 {
     pinMode(led, OUTPUT);
     Serial.begin(115200);
+    Serial.setDebugOutput(true);
     Serial.println("Booting");
-    WiFi.persistent(
-        false); // This is an "always on" setup, so we want to avoid any
-    WiFi.mode(WIFI_OFF); // previous wifi attachments.
     WiFi.mode(WIFI_STA);
     WiFi.enableInsecureWEP(true);
-    WiFi.begin(ssid, password);
-    while (WiFi.waitForConnectResult() != WL_CONNECTED)
-        {
-            Serial.println("Connection Failed! Rebooting...");
-            ESP.restart();
-        }
+
+#include "wifi-secrets.h" // secrets kept in separate file
+
+    wifiMulti.run();
 
     // Identification
     Serial.println();
@@ -103,7 +106,11 @@ void setup()
     Serial.println(vfname);
     Serial.print("timestamp (local time): ");
     Serial.println(vtimestamp);
+    Serial.println(versionstring);
     Serial.println();
+
+    // The following block handles OTA requests initiated via the arduino IDE
+    // or similar mechanism
 
     ArduinoOTA.onStart([]() {
         String type;
@@ -149,15 +156,16 @@ void setup()
     });
     ArduinoOTA.begin();
 
+    // end OTA block
+
     Serial.println("Ready");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-
-    server.on("/", handle_OnConnect);
-    server.onNotFound(handle_NotFound);
-
-    server.begin();
-    Serial.println("HTTP server started");
+    Serial.print("default hostname: ");
+    Serial.println(WiFi.hostname());
+    myHostname = checkHostname(WiFi.hostname());
+    Serial.print("hostname: ");
+    Serial.println(myHostname);
 
     // start the BME module
     bme.begin(BME_ADDR);
@@ -172,29 +180,40 @@ void setup()
                     Adafruit_BME280::SAMPLING_X1, // pressure
                     Adafruit_BME280::SAMPLING_X1, // humidity
                     Adafruit_BME280::FILTER_OFF);
+
+    // start the web server
+    server.on("/", handle_OnConnect);
+    server.onNotFound(handle_NotFound);
+
+    server.begin();
+    Serial.println("HTTP server started");
 }
 
 void loop()
 {
+    Serial.setDebugOutput(true);
+    wifiMulti.run();
     ArduinoOTA.handle();
     server.handleClient();
 
     unsigned long currentMillis = millis();
-    // loop to blink without delay
-    // blink pattern 4 - 1 - 4 - 1 ...
-    if (currentMillis - previousMillis >= interval)
+
+    // loop to blink without invoking delay()
+    // blink pattern: 1 - 6 - 1 - 6 - 1 ...
+    if (currentMillis - previousMillis >= blinkInterval)
         {
             // save the last time you changed the LED state
             previousMillis = currentMillis;
             ledcount++;
-            ledmod = ledcount % 128;
+            ledmod = ledcount % 200;
             if (ledmod == 0 || ledmod == 54 || ledmod == 64 || ledmod == 74 ||
-                ledmod == 84)
+                ledmod == 84 || ledmod == 94 || ledmod == 104)
                 {
                     ledState = 0; // Oddly, this turns LED _ON_
                 }
             else if (ledmod == 1 || ledmod == 55 || ledmod == 65 ||
-                     ledmod == 75 || ledmod == 85)
+                     ledmod == 75 || ledmod == 85 || ledmod == 95 ||
+                     ledmod == 105)
                 {
                     ledState = 1; // turns LED _OFF_
                 }
@@ -204,21 +223,53 @@ void loop()
             digitalWrite(led, ledState);
         }
 
+    // At intervals, check website to see if a new version is availalble
+    if ((currentMillis >= nextOtaUpdate) && (WiFi.status() == WL_CONNECTED))
+        {
+            WiFiClientSecure client;
+            client.setInsecure(); // See BearSSL documentation
+
+            HTTPUpdateResult ret =
+                ESPhttpUpdate.update(client, "espsite.jmcg.net", 80,
+                                     "/esp/update/arduino.php", versionstring);
+            switch (ret)
+                {
+                case HTTP_UPDATE_FAILED:
+                    Serial.println("[update] Update failed.");
+                    break;
+                case HTTP_UPDATE_NO_UPDATES:
+                    Serial.println("[update] Update no Update.");
+                    break;
+                case HTTP_UPDATE_OK:
+                    Serial.println("[update] Update ok."); // may not called we
+                                                           // reboot the ESP
+                    break;
+                }
+            nextOtaUpdate = currentMillis + OtaUpdateInterval;
+            Serial.println("");
+        }
+
 #ifdef PHANT01
     // handle phant reporting
-    if (currentMillis >= phantNextReport)
+    if ((currentMillis >= phantNextReport) && (WiFi.status() == WL_CONNECTED))
         {
-            handlePhantReport();
-            phantNextReport = currentMillis + phantInterval;
+            myHostname = checkHostname(WiFi.hostname());
+            Serial.print("hostname: ");
+            Serial.println(WiFi.hostname());
+            handlePhantReport() ||
+                (phantNextReport = currentMillis + phantInterval);
         }
 #endif // PHANT01
 
 #ifdef IFTTT
     // handle ifttt reporting
-    if (currentMillis >= iftttNextReport)
+    if ((currentMillis >= iftttNextReport) && (WiFi.status() == WL_CONNECTED))
         {
-            handleIftttReport();
-            iftttNextReport = currentMillis + iftttInterval;
+            myHostname = checkHostname(WiFi.hostname());
+            Serial.print("hostname: ");
+            Serial.println(WiFi.hostname());
+            handleIftttReport(WiFi.hostname()) ||
+                (iftttNextReport = currentMillis + iftttInterval);
         }
 #endif // IFTTT
 }
@@ -230,6 +281,8 @@ void handle_OnConnect()
     humidity = bme.readHumidity();
     pressure = bme.readPressure() / 100.0F;
     altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
+    Serial.println("sending text/html report");
+
     server.send(
         200, "text/html",
         SendHTML(temperatureC, temperatureF, humidity, pressure, altitude));
@@ -274,7 +327,7 @@ String SendHTML(float temperatureC, float temperaturef, float humidity,
         ".icon{width:65px}"
         "</style>"
         "<script>\n"
-        "setInterval(loadDoc,5000);\n"
+        "setInterval(loadDoc,30000);\n"
         "function loadDoc() {\n"
         "var xhttp = new XMLHttpRequest();\n"
         "xhttp.onreadystatechange = function() {\n"
@@ -404,14 +457,19 @@ String SendHTML(float temperatureC, float temperaturef, float humidity,
     ptr += "<span class='superscript'>m</span></div>"
            "</div>"
            "</div>"
-           "<h2>(runs on ESP8266 with a BME280)</h2>"
+           "<h2>(runs on ESP8266 with a BME280)</h2>",
+        "<small>";
+
+    ptr += myHostname;
+
+    ptr += "</small>"
            "</body>"
            "</html>";
     return ptr;
 }
 
 #ifdef PHANT01
-void handlePhantReport()
+unsigned int handlePhantReport()
 {
     // Send data to logging site
     Serial.print("sending data to ");
@@ -425,21 +483,12 @@ void handlePhantReport()
     // Using HTTPS protocol
     WiFiClientSecure client;
     client.setInsecure(); // See BearSSL documentation
+
     if (!client.connect(phantHost, 443))
         {
             Serial.println("Connection Fail");
-            // return;
-        }
-    if (client.verify(phantCertFingerprint, phantHost))
-        {
-            Serial.println(
-                "certificate matches"); // With BearSSL set to Insecure mode, it
-                                        // will always report that it matches
-        }
-    else
-        {
-            Serial.println("certificate doesn't match");
-            // return;
+            phantNextReport += phantInterval / 10;
+            return 1;
         }
 
     String ReqData = "baromin=";
@@ -461,7 +510,7 @@ void handlePhantReport()
     WebReq += phantPrivKey;
     WebReq += "\r\n";
     WebReq += "Connection: "
-              "close"
+              "keep-alive"
               "\r\n";
     WebReq += "Content-Length: ";
     WebReq += ReqData.length();
@@ -474,20 +523,59 @@ void handlePhantReport()
     client.print(WebReq);
 
     Serial.println("-----Response-----");
+    unsigned long contentLength = 0;
+    bool EOHseen = 0;
     while (client.connected())
         {
-            if (client.available())
+            String line;
+            if (client.available() and !EOHseen)
                 {
-                    String line = client.readStringUntil('\n');
-                    Serial.println(line);
+                    line = client.readStringUntil('\n');
+                    Serial.print(line.length());
+                    Serial.print(" [");
+                    Serial.print(line);
+                    Serial.println("]");
+                    if (line.startsWith("content-length:"))
+                        {
+                            // find first digit, or EOS
+                            unsigned int len = line.length();
+                            unsigned int p = 0;
+                            while (p <= len && !isDigit(line.charAt(p)))
+                                {
+                                    ++p;
+                                }
+                            if (p <= len)
+                                {
+                                    contentLength = line.substring(p).toInt();
+                                }
+                        }
+                    if (line.startsWith("\r") or line.startsWith("\n") or
+                        line.length() <= 1)
+                        {
+                            EOHseen = 1;
+                        }
+                }
+            if (client.available() >= contentLength and EOHseen)
+                {
+                    char payload[contentLength + 1];
+                    client.readBytes(payload, contentLength);
+                    payload[contentLength] = '\x00';
+                    Serial.print(contentLength);
+                    Serial.print(" [");
+                    Serial.print(payload);
+                    Serial.println("] ");
+                    break;
                 }
         }
     Serial.println("----------");
+    Serial.println("");
+    return 0;
 }
 #endif // PHANT01
 
 #ifdef IFTTT
-void handleIftttReport()
+#include "ifttt-secrets.h"
+unsigned int handleIftttReport(String myHostname)
 {
     // Send data to notification site
     Serial.print("sending data to ");
@@ -504,18 +592,8 @@ void handleIftttReport()
     if (!client.connect(iftttHost, 443))
         {
             Serial.println("Connection Fail");
-            // return;
-        }
-    if (client.verify(iftttCertFingerprint, iftttHost))
-        {
-            Serial.println(
-                "certificate matches"); // With BearSSL set to Insecure mode, it
-                                        // will always report that it matches
-        }
-    else
-        {
-            Serial.println("certificate doesn't match");
-            // return;
+            iftttNextReport += iftttInterval / 10;
+            return 1;
         }
 
     // IFTTT will accept JSON here
@@ -534,7 +612,8 @@ void handleIftttReport()
 
     String WebReq = "POST ";
     WebReq += iftttWebPage;
-    WebReq += iftttEventname;
+    WebReq += myHostname;
+    WebReq += "EVENT";
     WebReq += "/with/key/";
     WebReq += iftttMakerKey;
     WebReq += " HTTP/1.1\r\n";
@@ -571,13 +650,13 @@ void handleIftttReport()
                     if (line.startsWith("Content-Length:"))
                         {
                             // find first digit, or EOS
-                            unsigned int l = line.length();
+                            unsigned int len = line.length();
                             unsigned int p = 0;
-                            while (p <= l && !isDigit(line.charAt(p)))
+                            while (p <= len && !isDigit(line.charAt(p)))
                                 {
                                     ++p;
                                 }
-                            if (p <= l)
+                            if (p <= len)
                                 {
                                     contentLength = line.substring(p).toInt();
                                 }
@@ -592,6 +671,7 @@ void handleIftttReport()
                 {
                     char payload[contentLength + 1];
                     client.readBytes(payload, contentLength);
+                    payload[contentLength] = '\x00';
                     Serial.print(contentLength);
                     Serial.print(" [");
                     Serial.print(payload);
@@ -600,5 +680,34 @@ void handleIftttReport()
                 }
         }
     Serial.println("----------");
+    Serial.println("");
+    return 0;
 }
 #endif // IFTTT
+
+String checkHostname(String curHost)
+{
+    String newHost;
+    // Map MAC-based default hostnames to what should be the desired
+    // DHCP-assigned hostname This function is called during loop because WiFi
+    // can, in principle, be rehomed
+#include "hostmap-secrets.h"
+    int i;
+    newHost = curHost;
+
+    for (i = 0; hostMap[i].compareTo(""); i += 2)
+        {
+            if (hostMap[i].equals(curHost))
+                {
+                    break;
+                }
+        }
+
+    if (hostMap[i].equals(curHost))
+        {
+            newHost = hostMap[i + 1];
+            WiFi.hostname(newHost);
+        }
+
+    return WiFi.hostname();
+}
