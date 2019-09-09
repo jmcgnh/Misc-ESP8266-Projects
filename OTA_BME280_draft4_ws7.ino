@@ -19,10 +19,13 @@
 // module. Some choices remain: whether to use deep sleep, whether to try to
 // report battery voltage. Deep sleep means that real-time web response will
 // need to be delegated elsewhere, most likely to the mosquitto host.
+// 2019-09-09 reworked the blink code; maybe this will be easier and more
+// compact 2019-09-09 started working on unsecured mqtt handler 2019-09-09 naive
+// attempt at using SSL for MQTT
 //
 //////////////////////////////////////////////////////
-// #define DEBUG_ESP_WIFI 1
-// #define DEBUG_ESP_HTTP_UPDATE 1
+#define DEBUG_ESP_WIFI 1
+#define DEBUG_ESP_HTTP_UPDATE 1
 #include <Adafruit_BME280.h>
 #include <Adafruit_Sensor.h>
 #include <ArduinoOTA.h>
@@ -32,17 +35,19 @@
 #include <ESP8266httpUpdate.h>
 #include <ESP8266mDNS.h>
 #include <PubSubClient.h>
+#include <String.h>
 #include <WiFiUdp.h>
 #include <Wire.h>
 
 // Identification
 const char vfname[] = __FILE__;
 const char vtimestamp[] = __DATE__ " " __TIME__;
-String versionstring = "20190820.0220.1";
+String versionstring = "20190909.1245.1";
 String myHostname = "unknown";
 
 #define PHANT01 1
 #define IFTTT 1
+#define MQTT 1
 
 #ifdef PHANT01
 /////////////// Phant ////////////////////////
@@ -52,8 +57,8 @@ const char phantWebPage[] = MYPHANTWEBPAGE;
 const char phantPubKey[] = MYPHANTPUBKEY;
 const char phantPrivKey[] = MYPHANTPRIVKEY;
 unsigned long phantNextReport = 0;
-unsigned long phantInterval = 15 * 60 * 1000; // 15 minutes
-#endif                                        // PHANT01
+const unsigned long phantInterval = 8 * 60 * 1000; // 8 minutes
+#endif                                             // PHANT01
 
 #ifdef IFTTT
 /////////////// IFTTT ////////////////////////
@@ -62,19 +67,35 @@ const char iftttHost[] = "maker.ifttt.com";
 const char iftttWebPage[] = "/trigger/";
 const char iftttMakerKey[] = MYIFTTTMAKERKEY;
 unsigned long iftttNextReport = 0;
-unsigned long iftttInterval = 20 * 60 * 1000; // 20 minutes
-#endif                                        // IFTTT
+const unsigned long iftttInterval = 11 * 60 * 1000; // 11 minutes
+#endif                                              // IFTTT
+
+#ifdef MQTT
+#include "mqtt-secrets.h"
+const char *mqttServer = MQTTHOST;
+const int mqttPort = MQTTPORT;
+const char *mqttUser = MQTTUSER;
+const char *mqttPass = MQTTPASS;
+unsigned long mqttNextReport = 0;
+const unsigned long mqttInterval = 3 * 60 * 1000; // 3 minutes
+#endif                                            // MQTT
 
 // variabls for blinking an LED with Millis
 const int led = LED_BUILTIN; // ESP8266 Pin to which onboard LED is connected
-unsigned long previousMillis = 0; // will store last time LED was updated
-const long blinkInterval = 20;    // interval at which to blink (milliseconds)
-unsigned long ledcount;           // led counter for non-binary blink states
-unsigned long ledmod;             // remainder of ledcount
-int ledState = LOW;               // ledState used to set the LED
+#define LED_OFF HIGH
+#define LED_ON LOW
+int ledState = LED_ON; // initial ledState
+int ledSeqPos = 0;     // blink pattern position counter
+// blink pattern: 1 - 7 - 1 - 7 - 1 ...
+const int blinkSeq[] = {
+    1000, 10, // 1 long
+    800,  1,  // 6 short
+    200,  1,   200, 1,   200, 1, 200,
+    1,    200, 1,   200, 1,   0}; // sentinal for end of sequence
+unsigned long nextLedTransition = 0;
 
 // OTA variables
-const long OtaUpdateInterval = 10 * 60 * 1000; // 10 minutes
+const unsigned long OtaUpdateInterval = 10 * 60 * 1000; // 10 minutes
 unsigned long nextOtaUpdate = 0;
 
 ESP8266WiFiMulti wifiMulti;
@@ -94,7 +115,7 @@ void setup()
     Serial.setDebugOutput(true);
     Serial.println("Booting");
     WiFi.mode(WIFI_STA);
-    WiFi.enableInsecureWEP(true);
+    WiFi.enableInsecureWEP(true); // needed since we still run WEP at home
 
 #include "wifi-secrets.h" // secrets kept in separate file
 
@@ -199,33 +220,26 @@ void loop()
     unsigned long currentMillis = millis();
 
     // loop to blink without invoking delay()
-    // blink pattern: 1 - 6 - 1 - 6 - 1 ...
-    if (currentMillis - previousMillis >= blinkInterval)
+    if (currentMillis > nextLedTransition)
         {
-            // save the last time you changed the LED state
-            previousMillis = currentMillis;
-            ledcount++;
-            ledmod = ledcount % 200;
-            if (ledmod == 0 || ledmod == 54 || ledmod == 64 || ledmod == 74 ||
-                ledmod == 84 || ledmod == 94 || ledmod == 104)
-                {
-                    ledState = 0; // Oddly, this turns LED _ON_
-                }
-            else if (ledmod == 1 || ledmod == 55 || ledmod == 65 ||
-                     ledmod == 75 || ledmod == 85 || ledmod == 95 ||
-                     ledmod == 105)
-                {
-                    ledState = 1; // turns LED _OFF_
-                }
-            // Serial.print( ledState);
-            // Serial.println(" blink");
+            ledState ^= 1; // toggle ledState;
             // set the LED with the ledState of the variable:
             digitalWrite(led, ledState);
+            // Serial.print("blink ");
+            // Serial.println( ledState);
+
+            nextLedTransition = currentMillis + blinkSeq[ledSeqPos++];
+            if (blinkSeq[ledSeqPos] == 0)
+                {
+                    ledSeqPos = 0;
+                }
         }
 
     // At intervals, check website to see if a new version is availalble
     if ((currentMillis >= nextOtaUpdate) && (WiFi.status() == WL_CONNECTED))
         {
+            Serial.println("");
+            Serial.println("Look for OTA update");
             WiFiClientSecure client;
             client.setInsecure(); // See BearSSL documentation
 
@@ -254,6 +268,7 @@ void loop()
     if ((currentMillis >= phantNextReport) && (WiFi.status() == WL_CONNECTED))
         {
             myHostname = checkHostname(WiFi.hostname());
+            Serial.println("");
             Serial.print("hostname: ");
             Serial.println(WiFi.hostname());
             handlePhantReport() ||
@@ -265,11 +280,25 @@ void loop()
     // handle ifttt reporting
     if ((currentMillis >= iftttNextReport) && (WiFi.status() == WL_CONNECTED))
         {
+            Serial.println("");
             myHostname = checkHostname(WiFi.hostname());
             Serial.print("hostname: ");
             Serial.println(WiFi.hostname());
             handleIftttReport(WiFi.hostname()) ||
                 (iftttNextReport = currentMillis + iftttInterval);
+        }
+#endif // IFTTT
+
+#ifdef MQTT
+    // handle mqtt reporting
+    if ((currentMillis >= mqttNextReport) && (WiFi.status() == WL_CONNECTED))
+        {
+            Serial.println("");
+            myHostname = checkHostname(WiFi.hostname());
+            Serial.print("hostname: ");
+            Serial.println(WiFi.hostname());
+            handleMqttReport(WiFi.hostname()) ||
+                (mqttNextReport = currentMillis + mqttInterval);
         }
 #endif // IFTTT
 }
@@ -281,7 +310,8 @@ void handle_OnConnect()
     humidity = bme.readHumidity();
     pressure = bme.readPressure() / 100.0F;
     altitude = bme.readAltitude(SEALEVELPRESSURE_HPA);
-    Serial.println("sending text/html report");
+
+    Serial.println("sending text/html");
 
     server.send(
         200, "text/html",
@@ -327,7 +357,7 @@ String SendHTML(float temperatureC, float temperaturef, float humidity,
         ".icon{width:65px}"
         "</style>"
         "<script>\n"
-        "setInterval(loadDoc,30000);\n"
+        "setInterval(loadDoc,60000);\n"
         "function loadDoc() {\n"
         "var xhttp = new XMLHttpRequest();\n"
         "xhttp.onreadystatechange = function() {\n"
@@ -486,7 +516,7 @@ unsigned int handlePhantReport()
 
     if (!client.connect(phantHost, 443))
         {
-            Serial.println("Connection Fail");
+            Serial.println("Phant Connection Fail");
             phantNextReport += phantInterval / 10;
             return 1;
         }
@@ -591,7 +621,7 @@ unsigned int handleIftttReport(String myHostname)
     client.setInsecure(); // See BearSSL documentation
     if (!client.connect(iftttHost, 443))
         {
-            Serial.println("Connection Fail");
+            Serial.println("IFTTT Connection Fail");
             iftttNextReport += iftttInterval / 10;
             return 1;
         }
@@ -684,6 +714,61 @@ unsigned int handleIftttReport(String myHostname)
     return 0;
 }
 #endif // IFTTT
+
+#ifdef MQTT
+unsigned int handleMqttReport(String myHostname)
+{
+    // Send data to notification site
+    Serial.print("sending data to ");
+    Serial.print(mqttServer);
+    Serial.print(" on port ");
+    Serial.println(mqttPort);
+
+    float tempC = bme.readTemperature();
+    float tempf = 32.0 + (9.0 * tempC / 5.0);
+    float humidity = bme.readHumidity();
+    float barom = bme.readPressure() / 100.0F;
+
+    Serial.println("creating client");
+    WiFiClientSecure espClient;
+    espClient.setInsecure();
+    PubSubClient client(mqttServer, mqttPort, espClient);
+    // Using unsecured mqtt protocol
+    if (!client.connect(myHostname.c_str(), mqttUser, mqttPass))
+        {
+            Serial.println("MQTT Connection Fail");
+            mqttNextReport += mqttInterval / 10;
+            return 1;
+        }
+
+    String topicPrefix = "weather/";
+    topicPrefix += myHostname;
+    String topic = topicPrefix + "/tempc";
+    String payload = " ";
+    payload += tempC;
+    Serial.println("publish " + topic + " - " + payload);
+    client.publish(topic.c_str(), payload.c_str()) || Serial.println("failed");
+
+    topic = topicPrefix + "/tempf";
+    payload = tempf;
+    Serial.println("publish " + topic + " - " + payload);
+    client.publish(topic.c_str(), payload.c_str()) || Serial.println("failed");
+
+    topic = topicPrefix + "/humidity";
+    payload = humidity;
+    Serial.println("publish " + topic + " - " + payload);
+    client.publish(topic.c_str(), payload.c_str()) || Serial.println("failed");
+
+    topic = topicPrefix + "/barom";
+    payload = barom;
+    Serial.println("publish " + topic + " - " + payload);
+    client.publish(topic.c_str(), payload.c_str()) || Serial.println("failed");
+
+    Serial.println("");
+
+    return 0;
+}
+#endif // MQTT
 
 String checkHostname(String curHost)
 {
