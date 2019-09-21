@@ -19,9 +19,11 @@
 // module. Some choices remain: whether to use deep sleep, whether to try to
 // report battery voltage. Deep sleep means that real-time web response will
 // need to be delegated elsewhere, most likely to the mosquitto host.
-// 2019-09-09 reworked the blink code; maybe this will be easier and more
-// compact 2019-09-09 started working on unsecured mqtt handler 2019-09-09 naive
-// attempt at using SSL for MQTT
+// 2019-09-09 - reworked the blink code; maybe this will be easier and more
+// compact
+// 2019-09-09 - started working on unsecured mqtt handler
+// 2019-09-09 - naive attempt at using SSL for MQTT
+// 2019-09-12 - fixes for ESPhttpUpdate method
 //
 //////////////////////////////////////////////////////
 #define DEBUG_ESP_WIFI 1
@@ -42,7 +44,7 @@
 // Identification
 const char vfname[] = __FILE__;
 const char vtimestamp[] = __DATE__ " " __TIME__;
-String versionstring = "20190909.1245.1";
+String versionstring = "20190913.1026.1";
 String myHostname = "unknown";
 
 #define PHANT01 1
@@ -239,24 +241,31 @@ void loop()
     if ((currentMillis >= nextOtaUpdate) && (WiFi.status() == WL_CONNECTED))
         {
             Serial.println("");
-            Serial.println("Look for OTA update");
+            String versionedFilename = "OTA_BME280_draft4_ws7.ino";
+            versionedFilename += ".d1_mini.";
+            versionedFilename += versionstring;
+            Serial.print("Look for OTA update ");
+            Serial.println(versionedFilename);
+
             WiFiClientSecure client;
             client.setInsecure(); // See BearSSL documentation
 
             HTTPUpdateResult ret =
-                ESPhttpUpdate.update(client, "espsite.jmcg.net", 80,
-                                     "/esp/update/arduino.php", versionstring);
+                ESPhttpUpdate.update(client, "espsite.jmcg.net", 443,
+                                     "/update/arduino.php", versionedFilename);
             switch (ret)
                 {
                 case HTTP_UPDATE_FAILED:
                     Serial.println("[update] Update failed.");
                     break;
                 case HTTP_UPDATE_NO_UPDATES:
-                    Serial.println("[update] Update no Update.");
+                    Serial.println("[update] Update no update needed, already "
+                                   "latest version.");
                     break;
                 case HTTP_UPDATE_OK:
-                    Serial.println("[update] Update ok."); // may not called we
-                                                           // reboot the ESP
+                    Serial.println(
+                        "[update] Update ok."); // should not be called
+                                                // as we reboot the ESP
                     break;
                 }
             nextOtaUpdate = currentMillis + OtaUpdateInterval;
