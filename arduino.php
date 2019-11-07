@@ -66,8 +66,8 @@ $fp2 = fopen( 'model.txt', 'w');
 fprintf( $fp2, "model= %s\n", $model);
 fclose( $fp2);
 
-$fp = popen( "/bin/ls -rt model/$model | tee filelist.raw", 'r');
-$latestfile = trim( fgets( $fp));
+$fp = popen( "/bin/ls -t model/$model | tee filelist.raw", 'r');
+$latestfile = trim( fgets( $fp)); /* Newest file should be first ; ignore the rest */
 fclose( $fp);
 
 $filepath = "model/$model/$latestfile";

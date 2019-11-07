@@ -6,11 +6,17 @@
 // "latest" version of the code that is appropriate for this device.
 //
 // 2019-10-27 copy from OTA_BME280_draft7_ws7 (or was it draft8_ws8?)
+// 2019-11-06 add a simple web responder to trigger an immediate check for
+// update
+//   - the idea is to aid development of the perl scripts
+// 2019-11-07 This is now working pretty well with an updated arduino.php
+// script.
 
 //////////////////////////////////////////////////////
 #define DEBUG_ESP_WIFI 1
 #define DEBUG_ESP_HTTP_UPDATE 1
 #include <ArduinoOTA.h>
+#include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WiFiMulti.h>
 #include <ESP8266httpUpdate.h>
@@ -18,7 +24,7 @@
 // Identification
 const char vfname[] = __FILE__;
 const char vtimestamp[] = __DATE__ " " __TIME__;
-String versionstring = "20191029.0330.1";
+String versionstring = "20191107.1515.1";
 String myHostname = "unknown";
 String myMacAddress = "00:00:00:00:00:00";
 IPAddress myIpAddress;
@@ -31,18 +37,18 @@ const int led = LED_BUILTIN; // ESP8266 Pin to which onboard LED is connected
 int ledState = LED_ON; // initial ledState
 int ledSeqPos = 0;     // blink pattern position counter
 // blink pattern: 1 - 7 - 1 - 7 - 1 ...
-const int blinkSeq[] = {
-    1000, 10, // 1 long
-    800,  1,  // 6 short
-    200,  1,   200, 1,   200, 1, 200,
-    1,    200, 1,   200, 1,   0}; // sentinal for end of sequence
+const int blinkSeq[] = {1000, 10, // 1 long
+                        900,  1,  // 4 short
+                        100,  1,  200, 1,
+                        100,  1,  0}; // sentinal for end of sequence
 unsigned long nextLedTransition = 0;
 
 // OTA variables
-const unsigned long OtaUpdateInterval = 10 * 60 * 1000; // 10 minutes
+const unsigned long OtaUpdateInterval = 15 * 60 * 1000; // 15 minutes
 unsigned long nextOtaUpdate = 0;
 
 ESP8266WiFiMulti wifiMulti;
+ESP8266WebServer server(80);
 
 void setup()
 {
@@ -129,6 +135,12 @@ void setup()
             Serial.println(myIpAddress);
         }
     Serial.println("");
+    // start the web server
+    server.on("/", handle_OnConnect);
+    server.onNotFound(handle_NotFound);
+
+    server.begin();
+    Serial.println("HTTP server started");
 }
 
 void loop()
@@ -143,6 +155,7 @@ void loop()
         }
 
     ArduinoOTA.handle();
+    server.handleClient();
 
     unsigned long currentMillis = millis();
 
@@ -161,12 +174,13 @@ void loop()
                     ledSeqPos = 0;
                 }
         }
+
     // This section needs to be reworked...
     // At intervals, check website to see if a new version is availalble
     if ((currentMillis >= nextOtaUpdate) && (WiFi.status() == WL_CONNECTED))
         {
             Serial.println("");
-            Serial.print("Look for OTA update ");
+            Serial.print("Look for OTA update from curent version ");
             Serial.println(versionstring);
 
             WiFiClientSecure client;
@@ -182,7 +196,7 @@ void loop()
                     break;
                 case HTTP_UPDATE_NO_UPDATES:
                     Serial.println(
-                        "[update] Update not needed, already latest version.");
+                        "[update] Not needed, already latest version.");
                     break;
                 case HTTP_UPDATE_OK:
                     Serial.println(
@@ -200,7 +214,7 @@ void loop()
                     break;
                 case HTTP_UPDATE_NO_UPDATES:
                     Serial.println(
-                        "[update] Update not needed, already latest version.");
+                        "[update] Not needed, already latest version.");
                     break;
                 case HTTP_UPDATE_OK:
                     Serial.println(
@@ -211,4 +225,18 @@ void loop()
             nextOtaUpdate = currentMillis + OtaUpdateInterval;
             Serial.println("");
         }
+}
+
+// webserver handlers
+void handle_OnConnect()
+{
+    Serial.println("reset OTA update timer");
+    nextOtaUpdate = 0;
+    server.send(200, "text/plain", "OK");
+}
+
+void handle_NotFound()
+{
+    Serial.println("webserver: target not found");
+    server.send(404, "text/plain", "Not found");
 }

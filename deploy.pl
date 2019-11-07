@@ -40,4 +40,8 @@ printf STDERR "r3=%s", $result;
 
 # can now send a signal to a device for it to check for a new version immediately insteal of waiting out the OTA_update_interval
 
-if( exits( $ENV{DEPLOYTARGET} ) { my $target = $ENV{DEPLOYTARGET}; `curl http://$target/` }
+if( exists( $ENV{DEPLOYTARGET}) ) { 
+    my $target = $ENV{DEPLOYTARGET};
+    $result = `curl http://$target/`;
+    printf STDERR "r4=%s", $result;
+   }
