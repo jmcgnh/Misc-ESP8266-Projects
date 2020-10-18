@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
@@ -16,8 +17,9 @@ OneWire oneWire(ONE_WIRE_BUS);
 // Pass our oneWire reference to Dallas Temperature. 
 DallasTemperature sensors(&oneWire);
 
-#define LINNEA_APT
-#define PHANTWS6
+#define GOOSECOVE
+#define PHANTWS4
+#define WUNDERGROUND_ME
 
 #include "secret.h" // defines IDs and PASSWDs
 
@@ -30,7 +32,7 @@ const char* password = SSIDPASSWD;
 const int sleepTimeS = 600; // in seconds; 18000 for Half hour, 300 for 5 minutes etc.
 const char vfname[] =  __FILE__ ;
 const char vtimestamp[] =  __DATE__ " " __TIME__;
-const char versionstring[] = "20190708.0220.1";
+const char versionstring[] = "20201016.0630.1";
 
 #if defined( WUNDERGROUND) | defined(WUNDERGROUND_ME)
 /////////////// Weather Underground ////////////////////////
@@ -41,7 +43,7 @@ char wu_PASSWORD [] = WUPASSWD;
 char WU_cert_fingerprint[] = "12 DB BB 24 8E 0F 6F D4 63 EC 45 DD 5B ED 37 D7 6F B1 5F E5";
 #endif
 
-#if defined(PHANT01) || defined(PHANTWS6)
+#if defined(PHANTWS4) || defined(PHANTWS6)
 /////////////// Phant ////////////////////////
 char logHost [] = MYPHANTHOST;
 char logWebPage [] = MYPHANTWEBPAGE;
@@ -64,10 +66,11 @@ char logCertFingerprint [] = PHANTSHA1FINGERPRINT;
 
 unsigned long delayTime;
 
+void sleepMode();
+
 void setup()
 {
   int wifiwaitcount = 0;
-  int wifitrycount = 0;
   int wifistatus = WL_IDLE_STATUS;
 
   Serial.begin(115200);
